@@ -4,15 +4,16 @@ if [[ -z "$DIR" ]]; then
     DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 fi
 
-export CONTAINED_DEBUG=1
+export CONTAINED_DEBUG=0
 export CONTAINED_ENGINE="singularity"
 source $DIR/../contained
 
 while read line; do
-    
+
     value=$(awk '{ print $1}' <<<$line)
     expval=$(awk '{ print $2}' <<<$line)
-    testval=$(do_pull $value)
+    echo "TESTING: $value"
+    testval=$($DIR/../contained pull $value)
     testval=$?
 
     echo -e "Test: $value - $expval\t$testval"
@@ -23,7 +24,7 @@ while read line; do
      fi
 
 done <<EOM
-shub://singularity-hub.org/opensciencegrid/osgvo-tensorflow-gpu:latest 0
+shub://opensciencegrid/osgvo-tensorflow-gpu:latest 0
 docker://index.docker.io/sd2e/base:latest 1
 docker://index.docker.io/sd2e/base:ubuntu14 0
 index.docker.io/sd2e/base:ubuntu14 0

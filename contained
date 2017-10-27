@@ -4,12 +4,6 @@ if [[ -z "$DIR" ]]; then
     DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 fi
 
-function get_help() {
-
-    echo "Request assistance from the SD2E team at support@sd2e.org"
-    exit 1
-}
-
 function do_usage() {
 
 cat <<EOM
@@ -55,6 +49,12 @@ Override key configration options for $_THIS by setting:
 
 EOM
 
+}
+
+function get_help() {
+
+    echo "Request assistance from the SD2E team at support@sd2e.org"
+    exit 1
 }
 
 _THIS=$(basename $0)
@@ -158,11 +158,11 @@ function get_container_engine(){
                 then
                     echo "${CONTAINED_ENGINE}"
                 else
-                    die "Engine ${CONTAINED_ENGINE} was specified but not found on system"
+                    bad_container_engine "${CONTAINED_ENGINE} specified but not found on system"
                 fi
                 ;;
             *)
-                die "Container engine ${CONTAINED_ENGINE} not recognized"
+                bad_container_engine "${CONTAINED_ENGINE} not recognized"
                 ;;
         esac
     else
@@ -182,7 +182,7 @@ function get_container_engine(){
             then
                 CONTAINED_ENGINE="docker"
             else
-                die "Unable to detect a known container engine."
+                bad_container_engine "No known runtime detected"
             fi
         fi
 
@@ -191,6 +191,25 @@ function get_container_engine(){
         echo "$CONTAINED_ENGINE"
 
     fi
+
+}
+
+function bad_container_engine() {
+
+	MESSAGE=$1
+
+cat <<EOM
+
+An error has occurred detecting, setting, or using the specificed container
+runtime. If you expect to be running Docker, ensure it is in your \$PATH, is
+executable, and that you have rights to use it. If expecting Singularity, you
+are likely on an HPC system and the module supporting it is not active. On TACC
+systems, Singularity is available only on compute nodes and is activated via
+'module load tacc-singularity'.
+
+EOM
+
+exit 1
 
 }
 
@@ -420,7 +439,7 @@ function do_pull() {
             _do_singularity_pull "${URI}" "$FORCE"
             ;;
         *)
-            die "Unknown container engine $CONTAINED_ENGINE for 'pull'"
+            bad_container_engine "$CONTAINED_ENGINE not available for 'pull'"
     esac
 
 
@@ -497,7 +516,7 @@ function _do_singularity_pull() {
 	# 1. User (or someone) passed in --force
 	# 2. No cache can be found
 	# 3. Cache is found but is past TTL
-	set -x
+	#set -x
     debug "_do_singularity_pull checking cache $SINGULARITY_CACHEDIR/$INAME"
     if [ "${FORCE}" == 1 ] || \
        [[ -z $(find "$SINGULARITY_CACHEDIR" -mmin -"$CONTAINED_TTL" -type f -name "*${INAME}") ]]
@@ -509,7 +528,8 @@ function _do_singularity_pull() {
         case $PROTO in
             docker://*) # docker registry
             	log "Pulling ${CREPO} from a Docker registry"
-                singularity -s pull --name ${INAME} docker://${CREPO} >/dev/null 2>&1
+            	# [TODO] - See if we can make quay.io and other providers work
+                singularity pull --name ${INAME} docker://${CREPO} >/dev/null 2>&1
                 if [ "$?" != 0 ]
                 then
                 	fail "Error pulling ${CREPO}"
@@ -522,51 +542,31 @@ function _do_singularity_pull() {
 				log "Pulling ${CREPO} from a Singularity registry"
 				OWD=$PWD
 				cd $(mktemp -d)
-                singularity -s pull --name ${INAME} shub://${CREPO} >/dev/null 2>&1
+                singularity pull --name ${INAME} shub://${CREPO} >/dev/null 2>&1
                 if [ "$?" != 0 ]
                 then
                 	fail "Error pulling ${CREPO}"
                 else
-					mv -f ${INAME} ${SINGULARITY_CACHEDIR}/
+                	# [TODO] Check if .gz file is actually zipped or just
+                	#        named blah.gz. Uncompress if gzipped. Rename
+                	#        if not. right now, just rename since I can't
+                	#        get shub pull to emit gzipped data
+
+                	if [ -f "${INAME}.gz" ]
+                	then
+						mv -f "${INAME}.gz" ${SINGULARITY_CACHEDIR}/${INAME}
+					else
+						mv -f ${INAME} ${SINGULARITY_CACHEDIR}/
+					fi
 					log "(Done)"
 				fi
                 ;;
         esac
 		cd $OWD
 	fi
-	set +x
+	#set +x
     echo "${SINGULARITY_CACHEDIR}/${INAME}"
 
-}
-
-function get_extra_docker_run_opts(){
-    local OPTS=
-
-    # [TODO] - Make user-namespaced Docker optional
-    local _UID=$(id -u)
-    local _GID=$(id -g)
-    OPTS="$OPTS --user=0:${_GID} -v $PWD:/home:rw -w /home"
-
-	# Always remove intermediate containers
-    OPTS="$OPTS --rm"
-    # Limit RAM and CPU share
-    OPTS="$OPTS --network=none --cpus=1.0000 --memory=1G"
-    # limit IOPS
-    OPTS="$OPTS --device-read-iops=/dev/sda:1500 --device-read-iops=/dev/sda:1500"
-    echo $OPTS
-}
-
-function get_extra_singularity_exec_opts(){
-
-	# Utility function to inspect the system and populate
-	# the Singularity environment in a way that makes it
-	# most closely emulate Docker run environment. Currently
-	# this just involves invoking the new GPU flag if
-	# we can guess that the system supports it.
-
-    local OPTS=
-    OPTS="$OPTS $(get_gpu_flag)"
-    echo $OPTS
 }
 
 function do_execute() {
@@ -651,7 +651,9 @@ function do_execute() {
 			debug "Running $CONTAINED_IMAGE ($IMGFILE)"
 
 			# If user has passed COMMAND, invoke Singularity via exec
-			# If not, use Singularity run instead
+			# If user has specified Docker-style -it use Singularity shell
+			# Otherwise, invoke Singularity run
+			#
 			if [ ! -z "${COMMAND}" ]
 			then
 				debug "do_execute commmand opts form"
@@ -668,6 +670,40 @@ function do_execute() {
             rm -f $ENVFILE
     esac
 
+}
+
+function get_extra_docker_run_opts(){
+    local OPTS=
+
+    # [TODO] - Make user-namespaced Docker optional
+    local _UID=$(id -u)
+    local _GID=$(id -g)
+    OPTS="$OPTS --user=0:${_GID} -v $PWD:/home:rw -w /home"
+
+	# Always remove intermediate containers
+    OPTS="$OPTS --rm"
+    # Limit RAM and CPU share
+    OPTS="$OPTS --network=none --cpus=1.0000 --memory=1G"
+    # limit IOPS
+    OPTS="$OPTS --device-read-iops=/dev/sda:1500 --device-read-iops=/dev/sda:1500"
+    echo $OPTS
+}
+
+function get_extra_singularity_exec_opts(){
+
+	# Utility function to inspect the system and populate
+	# the Singularity environment in a way that makes it
+	# most closely emulate Docker run environment. Currently
+	# this just involves invoking the new GPU flag if
+	# we can guess that the system supports it.
+
+    local OPTS=
+    OPTS="$OPTS $(get_gpu_flag)"
+    echo $OPTS
+}
+
+function do_list_images() {
+	true
 }
 
 # Pop initial argument off getopts - we always expect a command
