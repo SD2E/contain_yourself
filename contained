@@ -11,34 +11,58 @@ function get_help() {
 }
 
 function do_usage() {
-   echo -e "usage: $_THIS - Contain the chaos of multiple container runtimes.\n"
-   echo -e "  $_THIS run repo:tag [command] [params]"
-   echo -e "    - Run commands inside a local container image"
-   echo -e "  $_THIS pull repo:tag"
-   echo -e "    - Pull a container image from a public registry"
-   echo -e "  $_THIS images (repo:tag)"
-   echo -e "    - List local container images"
-   echo -e "  $_THIS rm [opts] image"
-   echo -e "    - Remove a container image from the local cache"
-   echo -e "\nVersion: $VERSION | Help: support@sd2e.org\n"
+
+cat <<EOM
+
+usage: $_THIS - Contain the chaos of multiple container runtimes
+
+ $_THIS run [opts] repo:tag [command] [params]
+  - Run commands inside a local container image
+ $_THIS pull [-f] repo:tag
+  - Pull a container image from a public registry
+ $_THIS images (repo:tag)
+  - List local container images
+    Optional: lexically matching repo:tag
+ $_THIS rm [opts] image
+  - Remove a container image from the local cache
+ $_THIS build [opts] -t tag:label -f Dockerfile .
+  - Build a container image from a Dockerfile and assets
+    Note: Dispatches to TACC Cloud when local build support
+    is not available. Stores result in your local cache.
+ $_THIS config
+   - Read about runtime configuration options
+
+Version: $VERSION | Help: support@sd2e.org
+
+EOM
+
 }
 
-# Set up and/or import critical environment variables
+function do_config(){
 
-#SINGULARITY_PULLFOLDER
-#SINGULARITY_CACHEDIR
-#SINGULARITY_DOCKER_USERNAME
-#SINGULARITY_DOCKER_PASSWORD
-#CREDENTIAL
+cat <<EOM
+
+Override key configration options for $_THIS by setting:
+
+ CONTAINED_DEBUG [0/1]
+   - Print detailed debugging information (0)
+ CONTAINED_TTL [seconds]
+   - Maximum age for a pulled Singularity image (1440)
+ CONTAINED_ENGINE [docker/singularity]
+   - Override detection of detected/preferred container engine ()
+ CONTAINED_PREF_CACHE [path]
+   - Override preferred cache location (\$STOCKYARD/.contained)
+
+EOM
+
+}
 
 _THIS=$(basename $0)
 VERSION=0.1.0
-# Duration in minutes to cache a built singularity image
 CONTAINED_TTL=${CONTAINED_TTL-1440}
-# Inherit from ENV
 CONTAINED_ENGINE=${CONTAINED_ENGINE}
 CONTAINED_DEBUG=${CONTAINED_DEBUG}
-# Cascading preference for where to store 
+# Cascading preference for where to store
 # cached container assets
 if [ ! -z "${CONTAINED_PREF_CACHE}" ]
 then
@@ -50,6 +74,7 @@ else
     CONTAINED_PREF_CACHE=
 fi
 
+# Logging and screen printing functions
 function log(){
     mesg "INFO" $@
 }
@@ -84,6 +109,14 @@ function utc_date() {
 
 function get_gpu_flag() {
 
+	# Singularity 2.3 can use the host GPU so long as
+	# NVIDIA drivers are installed. This function is
+	# accessible via the --bv flag. Under docker, I
+	# believe we will need to share in the GPU
+	# device itself
+	# [TODO] - Investigate Docker state-of-the-art for
+	#          GPU access and usage
+
     [ -e /dev/nvidia0 ] && echo "--nv " || echo ""
 }
 
@@ -109,15 +142,18 @@ function get_container_engine(){
     # the CONTAINED_ENGINE environment variable. If it
     # is not set, contained looks for singularity first
     # then docker. Returns 'docker' or 'singularity'
-    # at present. 
+    # at present.
 
     debug "get_container_engine"
+
+	# Ref Avoid using 'which'. Use 'command -v' instead
+	# https://stackoverflow.com/questions/592620/check-if-a-program-exists-from-a-bash-script
 
     if [ ! -z "${CONTAINED_ENGINE}" ]
     then
         case "${CONTAINED_ENGINE}" in
             docker|singularity)
-                CONTAINED_APP=$(which ${CONTAINED_ENGINE})
+                CONTAINED_APP=$(command -v ${CONTAINED_ENGINE})
                 if [ ! -z "${CONTAINED_APP}" ]
                 then
                     echo "${CONTAINED_ENGINE}"
@@ -134,14 +170,14 @@ function get_container_engine(){
         # TODO - Enforce minimum versions
         # TODO - If we've accepted an override above, make sure
         #        the engine is in user's PATH. We'll just fail
-        #        if they don't have +x rights. 
+        #        if they don't have +x rights.
 
-        local CONTAINED_APP=$(which singularity)
+        local CONTAINED_APP=$(command -v singularity)
         if [ ! -z "${CONTAINED_APP}" ]
         then
             CONTAINED_ENGINE="singularity"
         else
-            CONTAINED_APP=$(which docker)
+            CONTAINED_APP=$(command -v docker)
             if [ ! -z "${CONTAINED_APP}" ]
             then
                 CONTAINED_ENGINE="docker"
@@ -167,7 +203,7 @@ function get_uri_to_imgname() {
     # quay.io/cyverse/kallisto:latest
     # quay.io/cyverse/kallisto:0.43.1--hdf51.8.17_0
     # cyverse/kallisto
-    # 
+    #
     # [TODO] - Support repo@commit
 
     local URI=$1
@@ -203,7 +239,7 @@ function get_uri_to_repo() {
     # quay.io/cyverse/kallisto:latest
     # quay.io/cyverse/kallisto:0.43.1--hdf51.8.17_0
     # cyverse/kallisto
-    # 
+    #
     # [TODO] - Support repo@commit
 
     local URI=$1
@@ -224,9 +260,9 @@ function get_uri_to_repo() {
 
 function get_reg_protocol(){
 
-    # Identify and return docker:// or 
+    # Identify and return docker:// or
     # shub:// protocols.
-    # Defaults to docker:// 
+    # Defaults to docker://
     # Ignores http(s), (s)ftp, agave, s3:
 
     local URI=$1
@@ -237,23 +273,24 @@ function get_reg_protocol(){
 
     debug "get_reg_protocol $URI"
 
-    proto="$(echo $URI | grep :// | sed -e's,^\(.*://\).*,\1,g')"
+    local proto="$(echo $URI | grep :// | sed -e's,^\(.*://\).*,\1,g')"
+    local response=
+
     case $proto in
-        docker://)
-            echo $proto
-            shift
-            ;;
-        shub://)
-            echo $proto
+        shub://|docker://)
+            response=$proto
             shift
             ;;
         s3://|http://|sftp://|ftp://|agave://|https://)
             die "Protocol $proto not supported"
             ;;
         *)
-            echo "docker://"
+            response="docker://"
             ;;
     esac
+
+    debug "get_reg_protocol.proto = $response"
+    echo "$response"
 
 }
 
@@ -263,7 +300,7 @@ function get_logical_cores() {
     # Does our level best to ascertain how many cores
     # this host has. Returns integer count of cores
     # and falls back to a safe '1' if success is
-    # not found using the defined paths. 
+    # not found using the defined paths.
 
     debug "get_logical_cores"
 
@@ -286,7 +323,7 @@ function get_logical_cores() {
 function init_cache() {
 
     # No parameters
-    # Ensures existence and permissions 
+    # Ensures existence and permissions
     # on pull and cache folder for Singularity and
     # exports the proper SINGULARITY_* variables
     # so child processes of this script
@@ -340,29 +377,52 @@ function init_cache() {
     fi
 
     debug "cache.SINGULARITY_CACHEDIR = $SINGULARITY_CACHEDIR"
-    debug "cache.SINGULARITY_PULLDIR = $INGULARITY_PULLDIR"
+    debug "cache.SINGULARITY_PULLFOLDER  = $SINGULARITY_PULLFOLDER"
 
 }
 
 
 function do_pull() {
 
-    local URI=$1
+	# Integrates docker and singularity pull
+	# Adds support for a -f flag to force
+	# refresh in when using singularity
+	#
+	# [TODO] Implement support for -a (all tags)
+
+	local URI=
+	local FORCE=
+
+	while getopts "fa" flag; do
+	case "$flag" in
+		f) FORCE=1;;
+		a) echo "Support for -a not implemented";;
+		\?) shift;;
+	esac
+	done
+	shift $(( OPTIND - 1 ))
+    URI=$1
+    if [ -z "$URI" ]
+    then
+    	die "Usage: $0 pull (-f) repository:tag"
+    fi
+
     debug "do_pull: $URI"
 
     local CONTAINED_ENGINE=$(get_container_engine)
-    debug "engine: $CONTAINED_ENGINE"
+    debug "do_pull.CONTAINED_ENGINE = $CONTAINED_ENGINE"
 
     case $CONTAINED_ENGINE in
         docker)
             _do_docker_pull "${URI}"
             ;;
         singularity)
-            _do_singularity_pull "${URI}"
+            _do_singularity_pull "${URI}" "$FORCE"
             ;;
         *)
             die "Unknown container engine $CONTAINED_ENGINE for 'pull'"
     esac
+
 
 }
 
@@ -376,7 +436,7 @@ function _do_docker_pull() {
     local PROTO=$(get_reg_protocol $URI)
     debug "Protocol: $PROTO"
     debug "Repo: $CREPO"
-    
+
     case $PROTO in
         docker://)
             docker pull "$CREPO"
@@ -397,23 +457,28 @@ function _do_docker_pull() {
 function _do_singularity_pull() {
 
     # Emulate the elegance of docker's pull
-    # command in singularity. Transparently 
+    # command in singularity. Transparently
     # caches the built image instead of forcing
     # recreation of the runtime every time
-    # a singularity pull is invoked. 
-    # 
-    # Accepts anything from fully-qualified docker:// 
+    # a singularity pull is invoked.
+    #
+    # Accepts anything from fully-qualified docker://
     # or shub:// tagged URLs to simple repo name
     #
     # Returns the name of the cached image file
-    
+
     local URI=$1
-    local FORCE=$2
+	local FORCE=$2
+
+    if [ "$CONTAINED_NOCACHE" == "1" ]
+    then
+    	FORCE=1
+    fi
 
     local CREPO=$(get_uri_to_repo $URI)
     # This is an imagename of form
     # registry-org-repo-tag.img
-    # We will always return this 
+    # We will always return this
     local INAME=$(get_uri_to_imgname $CREPO)
 
     # TODO - check TTL for cached images
@@ -428,33 +493,61 @@ function _do_singularity_pull() {
     # Good place to enforce that cache folder(s) exist and vars are set
     init_cache
 
-    # Is there an img file older than TTL
-    # Did user pass --force
-    # 
-    debug "_do_singularity_pull checking cache $SINGULARITY_CACHEFOLDER/$INAME"
-    if [[ -n $(find "$SINGULARITY_CACHEFOLDER" -mmin +"$CONTAINED_TTL" -type f -name "*${INAME}") ]] || [ "${FORCE}" == 1 ]
+	# Conditions where we actually pull
+	# 1. User (or someone) passed in --force
+	# 2. No cache can be found
+	# 3. Cache is found but is past TTL
+	set -x
+    debug "_do_singularity_pull checking cache $SINGULARITY_CACHEDIR/$INAME"
+    if [ "${FORCE}" == 1 ] || \
+       [[ -z $(find "$SINGULARITY_CACHEDIR" -mmin -"$CONTAINED_TTL" -type f -name "*${INAME}") ]]
     then
+    	debug "Cache invalid at $CONTAINED_TTL or invalidated by --force"
+    	#rm -f ${SINGULARITY_CACHEDIR}/${INAME} >/dev/null 2>&1
+		OWD=$PWD
+		cd $(mktemp -d)
         case $PROTO in
             docker://*) # docker registry
-                singularity -s --force pull --name ${INAME} docker://${CREPO}
+            	log "Pulling ${CREPO} from a Docker registry"
+                singularity -s pull --name ${INAME} docker://${CREPO} >/dev/null 2>&1
+                if [ "$?" != 0 ]
+                then
+                	fail "Error pulling ${CREPO}"
+                else
+	                mv -f ${INAME} ${SINGULARITY_CACHEDIR}/
+    	            log "(Done)"
+    	        fi
                 ;;
             shub://*) # singularity registry
-                singularity -s --force pull --name ${INAME} shub://${CREPO}
+				log "Pulling ${CREPO} from a Singularity registry"
+				OWD=$PWD
+				cd $(mktemp -d)
+                singularity -s pull --name ${INAME} shub://${CREPO} >/dev/null 2>&1
+                if [ "$?" != 0 ]
+                then
+                	fail "Error pulling ${CREPO}"
+                else
+					mv -f ${INAME} ${SINGULARITY_CACHEDIR}/
+					log "(Done)"
+				fi
                 ;;
         esac
-    fi
-
-    echo "${SINGULARITY_CACHEFOLDER}/${INAME}"
+		cd $OWD
+	fi
+	set +x
+    echo "${SINGULARITY_CACHEDIR}/${INAME}"
 
 }
 
 function get_extra_docker_run_opts(){
     local OPTS=
+
+    # [TODO] - Make user-namespaced Docker optional
     local _UID=$(id -u)
     local _GID=$(id -g)
     OPTS="$OPTS --user=0:${_GID} -v $PWD:/home:rw -w /home"
 
-    # Remove intermediate containers
+	# Always remove intermediate containers
     OPTS="$OPTS --rm"
     # Limit RAM and CPU share
     OPTS="$OPTS --network=none --cpus=1.0000 --memory=1G"
@@ -464,6 +557,13 @@ function get_extra_docker_run_opts(){
 }
 
 function get_extra_singularity_exec_opts(){
+
+	# Utility function to inspect the system and populate
+	# the Singularity environment in a way that makes it
+	# most closely emulate Docker run environment. Currently
+	# this just involves invoking the new GPU flag if
+	# we can guess that the system supports it.
+
     local OPTS=
     OPTS="$OPTS $(get_gpu_flag)"
     echo $OPTS
@@ -476,9 +576,6 @@ function do_execute() {
     local CONTAINED_ENGINE=$(get_container_engine)
     local OPTSET=$@
 
-    # Refactor to catch flag opts in
-    #   contained run [opts] repo command opts
-    # and translate to their respective runtime equivalents
     local RUN_OPTS=
     local CONTAINED_IMAGE=
     local COMMAND=
@@ -509,18 +606,24 @@ function do_execute() {
             shift
 
             docker run $RUN_OPTS $CONTAINED_IMAGE $COMMAND $@
-            exit 0
+            exit $?
             ;;
         singularity)
             debug "do_execute: singularity"
-            # Support X X X X
+            # Emulate docker -w and set up ENV passing via tempfile
+            # -i and -t are usually used for interactive containers
+            # so we might use their presence to invoke a `shell`
+            # command in place of the command/param. Might be
+            # able to support -d via the new services capability in
+            # Singularity 2.4
             ENVFILE=$(mktemp)
+            SHELL_INSTEAD=0
             while getopts "ite:w:" flag; do
                 case "$flag" in
                     w) RUN_OPTS="$RUN_OPTS --pwd $OPTARG";;
                     e) echo "$OPTARG" >> $ENVFILE;;
-                    t) true;;
-                    i) true;;
+                    t) SHELL_INSTEAD=$((SHELL_INSTEAD + 1));;
+                    i) SHELL_INSTEAD=$((SHELL_INSTEAD + 1));;
                     \?) shift;;
                 esac
             done
@@ -537,20 +640,38 @@ function do_execute() {
             if [ ! -f "${CONTAINED_IMAGE}" ]
             then
                 IMGFILE=$(_do_singularity_pull $CONTAINED_IMAGE)
+                debug "do_execute.IMGFILE (pulled) = file://$IMGFILE"
             else
-                # Assume user passed in a file for a good reason
-                # [TODO] Consider validating type using `file`
+                # Assume user passed in an .img file for a good reason
+                # [TODO] Consider validating type using `file` and/or extension
+                #        file ends with .img and has files-magic type of data
                 IMGFILE=$CONTAINED_IMAGE
-            fi            
+				debug "do_execute.IMGFILE (passed) = file://$IMGFILE"
+            fi
+			debug "Running $CONTAINED_IMAGE ($IMGFILE)"
 
-            . $ENVFILE && singularity -q exec $RUN_OPTS ${IMGFILE} ${COMMAND} $@
+			# If user has passed COMMAND, invoke Singularity via exec
+			# If not, use Singularity run instead
+			if [ ! -z "${COMMAND}" ]
+			then
+				debug "do_execute commmand opts form"
+				. $ENVFILE && singularity exec $RUN_OPTS ${IMGFILE} ${COMMAND} $@
+			elif [ "$SHELL_INSTEAD" == "2" ]
+			then
+				debug "do_execute interactive tty form"
+				. $ENVFILE && singularity shell $RUN_OPTS ${IMGFILE}
+			else
+				debug "do_execute run default form"
+           	 	. $ENVFILE && singularity run $RUN_OPTS ${IMGFILE}
+           	fi
+
             rm -f $ENVFILE
     esac
 
 }
 
 # Pop initial argument off getopts - we always expect a command
-# if we need to add options that modify contained itself 
+# if we need to add options that modify contained itself
 # that will happen here
 CMD=$1
 shift
@@ -561,18 +682,22 @@ case $CMD in
         ;;
     run)
         do_execute $@
-        ;;      
+        ;;
     pull)
-        REPO=$1
-        shift
-        do_pull "$REPO"
-        ;;        
+        do_pull $@
+        ;;
     images)
         die "not implemented"
         ;;
     rm|rmi|remove)
         die "not implemented"
         ;;
+    build)
+    	die "not implemented"
+    	;;
+    config)
+    	do_config
+    	;;
     *)
         do_usage
         ;;
