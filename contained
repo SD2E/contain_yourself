@@ -26,7 +26,7 @@ usage: $_THIS - Contain the chaos of multiple container runtimes
  $_THIS config
    - Read about runtime configuration options
 
-Version: $VERSION | Help: support@sd2e.org
+Help: support@sd2e.org | Issues: github.com/SD2E/contain_yourself/issues
 
 EOM
 
@@ -554,7 +554,17 @@ function _do_singularity_pull() {
 
                 	if [ -f "${INAME}.gz" ]
                 	then
-						mv -f "${INAME}.gz" ${SINGULARITY_CACHEDIR}/${INAME}
+                        test "${INAME}.gz" >/dev/null 2>&1
+                        if [ "$?" == 1 ]
+                        then
+                            # It's not actually gzipped
+                            # Just move and rename
+    						mv -f "${INAME}.gz" ${SINGULARITY_CACHEDIR}/${INAME}
+                        else
+                            # Gunzip, forcing name restore, then move
+                            gunzip --name -d "${INAME}.gz" && \
+                            mv ${INAME} ${SINGULARITY_CACHEDIR}/
+                        fi
 					else
 						mv -f ${INAME} ${SINGULARITY_CACHEDIR}/
 					fi
