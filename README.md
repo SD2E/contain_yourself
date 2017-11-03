@@ -1,48 +1,25 @@
+# Contained
 
+A convenience utility to support laptop-to-cloud-to-HPC native development. Wraps Singularity in Docker-like run semantics. Helps configure Docker for emphemeral use as a code execution environment. This script or its successors will ultimately be bundled with TACC's Singularity installation. 
 
-### Additional Licenses
+```
+usage: contained - Contain the chaos of multiple container runtimes
 
-Singularity
-Hashids
+ contained run [opts] repo:tag [command] [params]
+  - Run commands inside a local container image
+ contained pull [-f] repo:tag
+  - Pull a container image from a public registry
+ contained images (repo:tag)
+  - List local container images
+    Optional: lexically matching repo:tag
+ contained rm [opts] image
+  - Remove a container image from the local cache
+ contained build [opts] -t tag:label -f Dockerfile .
+  - Build a container image from a Dockerfile and assets
+    Note: Dispatches to TACC Cloud when local build support
+    is not available. Stores result in your local cache.
+ contained config
+   - Read about runtime configuration options
 
-
-## Verbs
-
-contained pull protocol://registry/org/name:tag
-contained list <org/name:tag>
-contained rmi <org/name:tag>
-contained exec protocol://registry/org/name:tag
-
-## Configs are
-
-name: docker-prod
-  - runtime: "docker"
-  - version: "17.09"
-  - host: "Linux"
-  - exec:
-    - command: "run"
-    - opts:
-        - "--rm"
-        - "--network=none"
-        - "--cpus=1.0000"
-        - "--memory=1G" 
-        - "--device-read-iops=/dev/sda:1500"
-        - "--device-read-iops=/dev/sda:1500"
-        - "--user=0:$GID"
-        - "-v $PWD:/home:rw" 
-        - "-w /home"
-  - before:
-  - after:
-
-name: docker-local
-  - runtime: "docker"
-  - version: "17.09"
-  - host: "Darwin"
-  - exec:
-    - command: "run"
-    - opts:
-        - "--rm"
-        - "-v $PWD:/home:rw" 
-        - "-w /home"
-  - before:
-  - after:
+Help: support@sd2e.org | Issues: github.com/SD2E/contain_yourself/issues
+```
