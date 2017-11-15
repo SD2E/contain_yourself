@@ -529,7 +529,7 @@ function _do_singularity_pull() {
             docker://*) # docker registry
             	log "Pulling ${CREPO} from a Docker registry"
             	# [TODO] - See if we can make quay.io and other providers work
-                singularity pull --name ${INAME} docker://${CREPO} >/dev/null 2>&1
+                singularity pull --name ${INAME} docker://${CREPO} 1>&2
                 if [ "$?" != 0 ]
                 then
                 	fail "Error pulling ${CREPO}"
@@ -542,7 +542,7 @@ function _do_singularity_pull() {
 				log "Pulling ${CREPO} from a Singularity registry"
 				OWD=$PWD
 				cd $(mktemp -d)
-                singularity pull --name ${INAME} shub://${CREPO} >/dev/null 2>&1
+                singularity pull --name ${INAME} shub://${CREPO} 1>&2
                 if [ "$?" != 0 ]
                 then
                 	fail "Error pulling ${CREPO}"
