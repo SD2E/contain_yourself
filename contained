@@ -239,11 +239,17 @@ function get_uri_to_imgname() {
     URI="$(echo ${URI/$proto/})"
 
     local TAGARRAY=($(awk -F ":" '{print $2}' <<< $URI))
+    local TAG=${TAGARRAY[0]}
+    if [ -z "${TAG}" ]
+    then
+    	TAGARRAY[0]="latest"
+    fi
+    debug "tag: ${TAGARRAY[0]}"
     local URL=$(awk -F ":" '{print $1}' <<< $URI)
-    # Container name at    position 0
+    # Container name at position 0
     local NAMEARRAY=($(awk -F "/" '{for (i=1;i<=NF;i++)print $i}' <<< $URL))
     local FNAMEARRAY=("${NAMEARRAY[@]}" "${TAGARRAY[@]}")
-    local FNAME=$(IFS=- ; echo "${FNAMEARRAY[*]}")
+    local FNAME=$(IFS='#' ; echo "${FNAMEARRAY[*]}")
 
     echo "${FNAME}.img"
 
