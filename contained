@@ -479,6 +479,150 @@ function _do_docker_pull() {
 
 }
 
+function _do_sha256sum() {
+	# Compute hash on img file with same approach Docker uses
+	# to uniquely identify layers
+	local INFILE=$1
+	local SUM=
+
+	if [ -f "${INFILE}.sha256" ]
+	then
+		SUM=$(cat $INFILE.sha256)
+	else
+		SUM=$(sha256sum -b $INFILE | awk -F' ' '{print $1}')
+		echo -n $SUM > ${INFILE}.sha256
+	fi
+	echo $SUM
+}
+
+function _trim_sha256sum() {
+	# Input: sha256 hash
+	# Output: 12-character leftmost characters of that hash
+	#         Conceptually aligned with Docker's approach
+	local SUM=$1
+	local TRIMMED=${SUM:0:12}
+	echo $TRIMMED
+}
+
+function humanizeBytes() {
+	echo $1 | awk '
+		function readable( input,     v,s )
+		  {
+			split( "KB MB GB TB" , v )
+			# confirms that the input is a number
+			if( input + 0.0 == input )
+			   {
+				while( input > 1024 ) { input /= 1024 ; s++ }
+				return sprintf( "%0.0f%s" , input , v[s] )
+			   }
+			else
+			   {
+				return input
+			   }
+		  }
+		{sub(/^[0-9]+/, readable($1)); print}'
+}
+
+function fileModTime() {
+
+	local fileMod
+	local os=`uname`
+	if [ "$os" == "Darwin" ];
+	then
+		fileMod=$(stat -f "%c" $1)
+		if [ "$?" == 0 ]
+		then
+			echo $fileMode
+		else
+			return $?
+		fi
+	elif [ "$os" == "Linux" ];
+	then
+		fileMod=$(stat -c %Y -- "$1")
+		if [ "$?" == 0 ]
+		then
+			echo $fileMode
+		else
+			return $?
+		fi
+	else
+		return 1
+	fi
+
+	echo $fileMod
+
+}
+
+function fileAgeHumanized() {
+    local fileMod
+    local num
+    local unit=""
+
+    fileMod=$(fileModTime $1)
+	local elapsed=$(( $(date +%s) - $fileMod ))
+
+	# year
+	if (( $elapsed > 31536000 )); then
+		num=$(( $elapsed / 31536000 ))
+		if (( $num > 1 )); then
+			unit="years"
+		else
+			unit="year"
+		fi
+	# month
+	elif (( $elapsed > 2419200 )); then
+		num=$(( $elapsed / 2419200 ))
+		if (( $num > 1 )); then
+			unit="months"
+		else
+			unit="month"
+		fi
+	# week
+	elif(( $elapsed > 604800 )); then
+		num=$(($elapsed / 604800))
+		if (( $num > 1 )); then
+			unit="weeks"
+		else
+			unit="week"
+		fi
+	# day
+	elif (( $elapsed > 86400 )); then
+		num=$(( $elapsed / 86400 ))
+		if (( $num > 1 )); then
+			unit="days"
+		else
+			unit="day"
+		fi
+	# hour
+	elif (( $elapsed > 3600 )); then
+		num=$(( $elapsed / 3600 ))
+		if (($num > 1 )); then
+			unit="hours"
+		else
+			unit="hour"
+		fi
+	# minute
+	elif (( $elapsed > 60 )); then
+		num=$(( $elapsed / 60 ))
+		if (( $num > 1 )); then
+			unit="minutes"
+		else
+			unit="minute"
+		fi
+	# minute
+	elif(( $elapsed > -1 )); then
+		num=$(( $elapsed / 1 ))
+		if (( $num >= 0 )); then
+			unit="seconds"
+		else
+			unit="second"
+		fi
+	fi
+
+	echo "$num $unit ago"
+
+}
+
 function _do_singularity_pull() {
 
     # Emulate the elegance of docker's pull
@@ -627,10 +771,7 @@ function do_execute() {
         singularity)
             debug "do_execute: singularity"
             # Emulate docker -w and set up ENV passing via tempfile
-            # -i and -t are usually used for interactive containers
-            # so we might use their presence to invoke a `shell`
-            # command in place of the command/param. Might be
-            # able to support -d via the new services capability in
+			# TODO: Support -d via the new services capability in
             # Singularity 2.4
             ENVFILE=$(mktemp)
             SHELL_INSTEAD=0
@@ -638,8 +779,8 @@ function do_execute() {
                 case "$flag" in
                     w) RUN_OPTS="$RUN_OPTS --pwd $OPTARG";;
                     e) echo "$OPTARG" >> $ENVFILE;;
-                    t) SHELL_INSTEAD=$((SHELL_INSTEAD + 1));;
-                    i) SHELL_INSTEAD=$((SHELL_INSTEAD + 1));;
+                    t) true;; # swallow -i (Docker --interactive)
+                    i) true;; # swallow -t (Docker --tty)
                     \?) shift;;
                 esac
             done
@@ -674,10 +815,6 @@ function do_execute() {
 			then
 				debug "do_execute commmand opts form"
 				. $ENVFILE && singularity exec $RUN_OPTS ${IMGFILE} ${COMMAND} $@
-			elif [ "$SHELL_INSTEAD" == "2" ]
-			then
-				debug "do_execute interactive tty form"
-				. $ENVFILE && singularity shell $RUN_OPTS ${IMGFILE}
 			else
 				debug "do_execute run default form"
            	 	. $ENVFILE && singularity run $RUN_OPTS ${IMGFILE}
@@ -719,7 +856,63 @@ function get_extra_singularity_exec_opts(){
 }
 
 function do_list_images() {
-	true
+
+  	debug "do_list_images"
+
+    local CONTAINED_ENGINE=$(get_container_engine)
+    local OPTSET=$@
+
+    local RUN_OPTS=
+    local CONTAINED_IMAGE=
+    local COMMAND=
+    local PARAMS=
+
+    case $CONTAINED_ENGINE in
+        docker)
+            debug "do_list_images: docker"
+            while getopts "aqf:" flag; do
+                case "$flag" in
+                    a) true;;
+                    q) true;;
+                    f) true;;
+                    \?) shift;;
+                esac
+            done
+            shift $(( OPTIND - 1 ))
+
+            docker images list $@
+            exit $?
+            ;;
+        singularity)
+            debug "do_list_images: singularity"
+            while getopts "aqf:" flag; do
+                case "$flag" in
+                    a) true;;
+                    q) true;;
+                    f) true;;
+                    \?) shift;;
+                esac
+            done
+            shift $(( OPTIND - 1 ))
+
+			_do_list_singularity_images
+
+    esac
+
+}
+
+function _do_list_singularity_images() {
+
+	init_cache
+	for IMG in $(find $SINGULARITY_CACHEDIR -type f -name "*img")
+	do
+		BASE=$(basename $IMG)
+		SHA256SUM=$(_trim_sha256sum $(_do_sha256sum $IMG))
+		SIZE=$(humanizeBytes $(du --bytes $IMG | awk '{print $1}'))
+		AGE=$(fileAgeHumanized $IMG)
+		echo -e "$BASE\t$SHA256SUM\t$AGE\t$SIZE"
+	done
+
 }
 
 # Pop initial argument off getopts - we always expect a command
@@ -739,7 +932,7 @@ case $CMD in
         do_pull $@
         ;;
     images)
-        die "not implemented"
+        do_list_images $@
         ;;
     rm|rmi|remove)
         die "not implemented"
