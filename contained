@@ -713,6 +713,7 @@ function _do_singularity_pull() {
 		cd $OWD
 	fi
 	#set +x
+	local HASH=$(_do_sha256sum ${SINGULARITY_CACHEDIR}/${INAME})
     echo "${SINGULARITY_CACHEDIR}/${INAME}"
 
 }
@@ -908,7 +909,7 @@ function _do_list_singularity_images() {
 		local SHA256SUM=$(_trim_sha256sum $(_do_sha256sum $IMG))
 		local SIZE=$(humanizeBytes $(du --bytes $IMG | awk '{print $1}'))
 		local AGE=$(fileAgeHumanized $IMG)
-		FOUT="$REPO|$TAG|$SHA256SUM|$AGE|$SIZE\n"
+		FOUT="$FOUT\n$REPO|$TAG|$SHA256SUM|$AGE|$SIZE"
 	done
 	echo -e "REPOSITORY|TAG|IMAGE ID|CREATED|SIZE\n$FOUT" | column -s'|' -t
 
