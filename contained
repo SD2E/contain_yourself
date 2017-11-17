@@ -908,9 +908,9 @@ function _do_list_singularity_images() {
 		local SHA256SUM=$(_trim_sha256sum $(_do_sha256sum $IMG))
 		local SIZE=$(humanizeBytes $(du --bytes $IMG | awk '{print $1}'))
 		local AGE=$(fileAgeHumanized $IMG)
-		FOUT="$REPO $TAG $SHA256SUM $AGE $SIZE\n$FOUT"
+		FOUT="$REPO|$TAG|$SHA256SUM|$AGE|$SIZE\n"
 	done
-	echo -e $FOUT | column -t
+	echo -e "REPOSITORY|TAG|IMAGE ID|CREATED|SIZE\n$FOUT" | column -s'|' -t
 
 }
 
