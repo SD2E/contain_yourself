@@ -479,6 +479,23 @@ function _do_docker_pull() {
 
 }
 
+function img_ctime() {
+	# Return creation time cached when container
+	# image was created
+	local INFILE=$1
+	local CTIME=
+
+	if [ -f "${INFILE}.ctime" ]
+	then
+		CTIME=$(cat $INFILE.ctime)
+	else
+		CTIME=$(date "+%s")
+		echo -n $CTIME > ${INFILE}.ctime
+	fi
+
+	echo $CTIME
+}
+
 function _do_sha256sum() {
 	# Compute hash on img file with same approach Docker uses
 	# to uniquely identify layers
@@ -525,18 +542,7 @@ function humanizeBytes() {
 
 function fileCTime() {
 
-	local fileCreated
-	local os=`uname`
-	if [ "$os" == "Darwin" ];
-	then
-		fileCreated=$(stat -f "%c" $1)
-	elif [ "$os" == "Linux" ];
-	then
-		fileCreated=$(stat -c %Y -- "$1")
-	else
-		return 1
-	fi
-
+	local fileCreated=$(img_ctime $1)
 	echo $fileCreated
 
 }
@@ -714,6 +720,7 @@ function _do_singularity_pull() {
 	fi
 	#set +x
 	local HASH=$(_do_sha256sum ${SINGULARITY_CACHEDIR}/${INAME})
+	local CTIME=$(img_ctime ${SINGULARITY_CACHEDIR}/${INAME})
     echo "${SINGULARITY_CACHEDIR}/${INAME}"
 
 }
