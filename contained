@@ -523,33 +523,21 @@ function humanizeBytes() {
 		{sub(/^[0-9]+/, readable($1)); print}'
 }
 
-function fileModTime() {
+function fileCTime() {
 
-	local fileMod
+	local fileCreated
 	local os=`uname`
 	if [ "$os" == "Darwin" ];
 	then
-		fileMod=$(stat -f "%c" $1)
-		if [ "$?" == 0 ]
-		then
-			echo $fileMode
-		else
-			return $?
-		fi
+		fileCreated=$(stat -f "%c" $1)
 	elif [ "$os" == "Linux" ];
 	then
-		fileMod=$(stat -c %Y -- "$1")
-		if [ "$?" == 0 ]
-		then
-			echo $fileMode
-		else
-			return $?
-		fi
+		fileCreated=$(stat -c %Y -- "$1")
 	else
 		return 1
 	fi
 
-	echo $fileMod
+	echo $fileCreated
 
 }
 
@@ -558,7 +546,7 @@ function fileAgeHumanized() {
     local num
     local unit=""
 
-    fileMod=$(fileModTime $1)
+    fileMod=$(fileCTime $1)
 	local elapsed=$(( $(date +%s) - $fileMod ))
 
 	# year
@@ -901,17 +889,28 @@ function do_list_images() {
 
 }
 
+function join_by { local IFS="$1"; shift; echo "$*"; }
+
 function _do_list_singularity_images() {
 
 	init_cache
+	local FOUT=""
 	for IMG in $(find $SINGULARITY_CACHEDIR -type f -name "*img")
 	do
-		BASE=$(basename $IMG)
-		SHA256SUM=$(_trim_sha256sum $(_do_sha256sum $IMG))
-		SIZE=$(humanizeBytes $(du --bytes $IMG | awk '{print $1}'))
-		AGE=$(fileAgeHumanized $IMG)
-		echo -e "$BASE\t$SHA256SUM\t$AGE\t$SIZE"
+		local BASE=$(basename $IMG)
+		local BASENAME=${BASE%.*}
+		#BASENAME=$(tr "-" "#" <<< $BASENAME)
+		local TAGARRAY=($(awk -F "#" '{for (i=1;i<=NF;i++)print $i}' <<< $BASENAME))
+		local COUNT=$(( ${#TAGARRAY[@]} - 1 ))
+		#local REPO=$(local IFS='_' ; echo "${TAGARRAY[@]:0:$COUNT}";)
+		local REPO=$(join_by '/' ${TAGARRAY[@]:0:$COUNT})
+		local TAG=${TAGARRAY[@]: -1}
+		local SHA256SUM=$(_trim_sha256sum $(_do_sha256sum $IMG))
+		local SIZE=$(humanizeBytes $(du --bytes $IMG | awk '{print $1}'))
+		local AGE=$(fileAgeHumanized $IMG)
+		FOUT="$REPO $TAG $SHA256SUM $AGE $SIZE\n$FOUT"
 	done
+	echo -e $FOUT | column -t
 
 }
 
